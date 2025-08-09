@@ -42,6 +42,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv install makelive
 ```
 
+Alternatively, you can run makelive with uv without installing it:
+
+```bash
+uvx makelive image_1234.jpg image_1234.mov
+```
+
 **Note**: This package may not install with `pip` due to a dependency resolution issue. PRs are welcome.
 
 ### Install from Source

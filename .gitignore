@@ -22,3 +22,4 @@ cov.xml
 scratch/
 site/
 pyrightconfig.json
+.envrc

@@ -26,41 +26,34 @@ makelive image_1234.jpg image_1234.mov
 
 Download and run the latest installer package for your Mac architecture from the [releases page](https://github.com/RhetTbull/makelive/releases).
 
-### Install via pip or pipx
+### Install via uv
 
-Alternatively, you can install from PyPI:
+Alternatively, you can install with uv:
 
-- `python3 -m pip install makelive`
+- Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
-Or you can use [pipx](https://github.com/pypa/pipx):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-- Open `Terminal` (search for `Terminal` in Spotlight or look in `Applications/Utilities`)
-- Install `homebrew` according to instructions at [https://brew.sh/](https://brew.sh/)
-- Type the following into Terminal: `brew install pipx`
-- Ensure that pipx installed packages are accessible in your PATH by typing: `pipx ensurepath`
-- Then type this: `pipx install makelive`
-- Now you should be able to run `makelive` by typing: `makelive`
+- Install makelive:
 
-Once you've installed makelive with pipx, to upgrade to the latest version:
+```bash
+uv install makelive
+```
 
-    pipx upgrade makelive
-
-> [!NOTE]
-> When installing other packages with homebrew, homebrew may update the version of Python installed which would then cause any app (including makelive) installed with `pipx` to fail. If this happens, the easiest fix is to reinstall makelive with:
-
-    pipx reinstall makelive
-
-Alternatively, you can reinstall all apps installed with `pipx` with:
-
-    pipx reinstall-all
+**Note**: This package may not install with `pip` due to a dependency resolution issue. PRs are welcome.
 
 ### Install from Source
 
 To install from source:
 
+- Install [uv](https://docs.astral.sh/uv/getting-started/installation/): `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - `git clone git@github.com:RhetTbull/makelive.git`
 - `cd makelive`
-- `pip install flit`
+- `uv venv`
+- `source .venv/bin/activate`
+- `uv pip install flit`
 - `flit install`
 
 ## API

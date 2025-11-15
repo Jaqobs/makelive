@@ -108,6 +108,10 @@ In order for Photos to treat a photo + video pair as a Live Photo, the video fil
 
 This tool uses the Core Graphics and AV Foundation frameworks to modify the metadata of the photo and video files to add the required Content Identifier.
 
+## Limitations
+
+The Live Photos created by this tool may not work as Live Wallpapers. I don't user Live Wallpapers and don't have time to debug this. I believe the issue has to do with video format and/or video length. I'm happy to accept a PR but please don't open an issue if Live Wallpapers don't work.
+
 ## Caution
 
 > [!WARNING]

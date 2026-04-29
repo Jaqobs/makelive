@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
-import threading
 import uuid
 
 import AVFoundation
@@ -158,51 +157,42 @@ def add_asset_id_to_quicktime_file(filepath: str | os.PathLike, asset_id: str) -
 
     Returns: Error message if there was an error, otherwise None.
 
-    Note: XMP metadata in the QuickTime movie file is not preserved by this function which
-    may result in metadata loss.
+    Note: This function updates only the movie-level metadata (content identifier) and writes
+    back the movie header in place. All track data, track reference atoms (tref), and mebx
+    metadata tracks are preserved exactly as they were in the original file.
+
+    The previous implementation used AVAssetExportSession with AVAssetExportPresetPassthrough,
+    which dropped track reference atoms (cdsc/cdep tref) that link mebx timed-metadata tracks
+    to the video track. iOS requires these tref associations to enable lock screen Live Wallpaper
+    animation (the "animate" button). By using AVMutableMovie and writing only the movie header,
+    the full atom structure is preserved.
     """
     filepath = pathlib.Path(filepath)
     with objc.autorelease_pool():
-        # rename file so export can write to original path
-        temp_filepath = filepath.parent / f".{asset_id}_{filepath.name}"
-        os.rename(filepath, temp_filepath)
-        input_url = NSURL.fileURLWithPath_(str(temp_filepath))
-        output_url = NSURL.fileURLWithPath_(str(filepath))
-        asset = AVFoundation.AVAsset.assetWithURL_(input_url)
-        metadata_item = avmetadata_for_asset_id(asset_id)
-        export_session = AVFoundation.AVAssetExportSession.alloc().initWithAsset_presetName_(
-            asset, AVFoundation.AVAssetExportPresetPassthrough
+        url = NSURL.fileURLWithPath_(str(filepath))
+        movie = AVFoundation.AVMutableMovie.movieWithURL_options_error_(url, None, None)
+        if movie is None:
+            return f"Could not open {filepath} as AVMutableMovie"
+
+        # Replace any existing content identifier, preserving all other movie-level metadata
+        existing = [
+            item for item in (movie.metadata() or [])
+            if not (
+                str(item.key()) == kKeyContentIdentifier
+                and str(item.keySpace()) == kKeySpaceQuickTimeMetadata
+            )
+        ]
+        movie.setMetadata_(existing + [avmetadata_for_asset_id(asset_id)])
+
+        # Write only the movie header back to the same URL.
+        # This updates the atom structure in place without re-encoding or re-interleaving
+        # any track data, so all tref associations between mebx and video tracks are preserved.
+        success, error = movie.writeMovieHeaderToURL_fileType_options_error_(
+            url, AVFoundation.AVFileTypeQuickTimeMovie, 0
         )
-
-        export_session.setOutputFileType_(AVFoundation.AVFileTypeQuickTimeMovie)
-        export_session.setOutputURL_(output_url)
-        export_session.setMetadata_([metadata_item])
-
-        # exportAsynchronouslyWithCompletionHandler_ is an asynchronous method that return immediately
-        # To wait for the export to complete, use a threading.Event to block until the completion handler is called.
-        event = threading.Event()
-        error = None
-
-        def _completion_handler():
-            nonlocal error
-            if error_val := export_session.error():
-                error = error_val.description()
-            event.set()
-
-        export_session.exportAsynchronouslyWithCompletionHandler_(_completion_handler)
-        event.wait()
-
-        if error:
-            try:
-                # filepath might not exist if export failed
-                os.unlink(filepath)
-            except FileNotFoundError:
-                pass
-            os.rename(temp_filepath, filepath)
-        else:
-            os.unlink(temp_filepath)
-
-        return error or None
+        if not success:
+            return f"writeMovieHeaderToURL failed for {filepath}: {error.description() if error else 'unknown error'}"
+        return None
 
 
 def is_image_file(filepath: str | os.PathLike):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
+import threading
 import uuid
 
 import AVFoundation
@@ -148,6 +149,55 @@ def avmetadata_for_asset_id(asset_id: str) -> AVFoundation.AVMetadataItem:
     return item
 
 
+def _add_asset_id_via_export_session(
+    filepath: pathlib.Path, asset_id: str
+) -> str | None:
+    """Stamp the content identifier via AVAssetExportSession (passthrough).
+
+    This re-exports the file and does not preserve track reference atoms (tref).
+    Used for non-QuickTime containers (e.g. .mp4) where AVMutableMovie's
+    writeMovieHeaderToURL is not supported.
+    """
+    with objc.autorelease_pool():
+        # rename file so export can write to original path
+        temp_filepath = filepath.parent / f".{asset_id}_{filepath.name}"
+        os.rename(filepath, temp_filepath)
+        input_url = NSURL.fileURLWithPath_(str(temp_filepath))
+        output_url = NSURL.fileURLWithPath_(str(filepath))
+        asset = AVFoundation.AVAsset.assetWithURL_(input_url)
+        metadata_item = avmetadata_for_asset_id(asset_id)
+        export_session = AVFoundation.AVAssetExportSession.alloc().initWithAsset_presetName_(
+            asset, AVFoundation.AVAssetExportPresetPassthrough
+        )
+
+        export_session.setOutputFileType_(AVFoundation.AVFileTypeQuickTimeMovie)
+        export_session.setOutputURL_(output_url)
+        export_session.setMetadata_([metadata_item])
+
+        event = threading.Event()
+        error = None
+
+        def _completion_handler():
+            nonlocal error
+            if error_val := export_session.error():
+                error = error_val.description()
+            event.set()
+
+        export_session.exportAsynchronouslyWithCompletionHandler_(_completion_handler)
+        event.wait()
+
+        if error:
+            try:
+                os.unlink(filepath)
+            except FileNotFoundError:
+                pass
+            os.rename(temp_filepath, filepath)
+        else:
+            os.unlink(temp_filepath)
+
+        return error or None
+
+
 def add_asset_id_to_quicktime_file(filepath: str | os.PathLike, asset_id: str) -> str | None:
     """Write the asset id to a QuickTime movie file at filepath and save to destination path
 
@@ -157,22 +207,28 @@ def add_asset_id_to_quicktime_file(filepath: str | os.PathLike, asset_id: str) -
 
     Returns: Error message if there was an error, otherwise None.
 
-    Note: This function updates only the movie-level metadata (content identifier) and writes
-    back the movie header in place. All track data, track reference atoms (tref), and mebx
-    metadata tracks are preserved exactly as they were in the original file.
+    For QuickTime (.mov) files, this updates only the movie-level metadata (content
+    identifier) and writes back the movie header in place. All track data, track
+    reference atoms (tref), and mebx metadata tracks are preserved exactly as they
+    were in the original file. iOS requires the cdsc/cdep tref associations between
+    mebx timed-metadata tracks and the video track to enable lock screen Live
+    Wallpaper animation (the "animate" button); writing only the movie header keeps
+    them intact.
 
-    The previous implementation used AVAssetExportSession with AVAssetExportPresetPassthrough,
-    which dropped track reference atoms (cdsc/cdep tref) that link mebx timed-metadata tracks
-    to the video track. iOS requires these tref associations to enable lock screen Live Wallpaper
-    animation (the "animate" button). By using AVMutableMovie and writing only the movie header,
-    the full atom structure is preserved.
+    For .mp4 files, AVMutableMovie's writeMovieHeaderToURL is not supported by the
+    underlying media format, so this falls back to AVAssetExportSession with
+    AVAssetExportPresetPassthrough. .mp4 is not used by Live Wallpapers, so the
+    tref-preservation behaviour is not relevant for that path.
     """
     filepath = pathlib.Path(filepath)
+    if filepath.suffix.lower() != ".mov":
+        return _add_asset_id_via_export_session(filepath, asset_id)
+
     with objc.autorelease_pool():
         url = NSURL.fileURLWithPath_(str(filepath))
-        movie = AVFoundation.AVMutableMovie.movieWithURL_options_error_(url, None, None)
+        movie, error = AVFoundation.AVMutableMovie.movieWithURL_options_error_(url, None, None)
         if movie is None:
-            return f"Could not open {filepath} as AVMutableMovie"
+            return f"Could not open {filepath} as AVMutableMovie: {error.description() if error else 'unknown error'}"
 
         # Replace any existing content identifier, preserving all other movie-level metadata
         existing = [
@@ -188,7 +244,7 @@ def add_asset_id_to_quicktime_file(filepath: str | os.PathLike, asset_id: str) -
         # This updates the atom structure in place without re-encoding or re-interleaving
         # any track data, so all tref associations between mebx and video tracks are preserved.
         success, error = movie.writeMovieHeaderToURL_fileType_options_error_(
-            url, AVFoundation.AVFileTypeQuickTimeMovie, 0
+            url, AVFoundation.AVFileTypeQuickTimeMovie, 0, None
         )
         if not success:
             return f"writeMovieHeaderToURL failed for {filepath}: {error.description() if error else 'unknown error'}"
